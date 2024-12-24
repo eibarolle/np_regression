@@ -1,3 +1,16 @@
+r"""
+Neural Process Regression models based on PyTorch models.
+
+References:
+
+.. [Wu2023arxiv]
+   Wu, D., Niu, R., Chinazzi, M., Vespignani, A., Ma, Y.-A., & Yu, R. (2023).
+   Deep Bayesian Active Learning for Accelerating Stochastic Simulation.
+   arXiv preprint arXiv:2106.02770. Retrieved from https://arxiv.org/abs/2106.02770
+
+Contributor: eibarolle
+"""
+
 import numpy as np
 from numpy.random import binomial
 import torch

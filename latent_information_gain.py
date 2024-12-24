@@ -5,17 +5,16 @@
 # LICENSE file in the root directory of this source tree.
 
 r"""
-Acquisition function for Self-Correcting Bayesian Optimization [hvarfner2023scorebo]_.
+Latent Information Gain Acquisition Function for Neural Process Models.
 
-References
+References:
 
-.. [hvarfner2023scorebo]
-    C. Hvarfner, E. Hellsten, F. Hutter, L. Nardi.
-    Self-Correcting Bayesian Optimization thorugh Bayesian Active Learning.
-    In Proceedings of the Annual Conference on Neural Information
-    Processing Systems (NeurIPS), 2023.
+.. [Wu2023arxiv]
+   Wu, D., Niu, R., Chinazzi, M., Vespignani, A., Ma, Y.-A., & Yu, R. (2023).
+   Deep Bayesian Active Learning for Accelerating Stochastic Simulation.
+   arXiv preprint arXiv:2106.02770. Retrieved from https://arxiv.org/abs/2106.02770
 
-Contributor: hvarfner
+Contributor: eibarolle
 """
 
 from __future__ import annotations
