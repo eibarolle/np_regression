@@ -16,14 +16,18 @@ from numpy.random import binomial
 import torch
 import matplotlib.pyplot as plt
 # %matplotlib inline
+from botorch.models.model import Model
+from botorch.posteriors import GPyTorchPosterior
+from botorch.acquisition.objective import PosteriorTransform
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import (RBF, Matern, RationalQuadratic,
                                               ExpSineSquared, DotProduct,
                                               ConstantKernel)
 from typing import Callable, List, Optional, Tuple
-import torch.nn as nn
+from torch.nn import Module, ModuleDict, ModuleList
 from sklearn import preprocessing
 from scipy.stats import multivariate_normal
+from gpytorch.distributions import MultivariateNormal
 
 device = torch.device("cpu")
 
@@ -184,7 +188,7 @@ def MAE(
     loss = torch.abs(pred-target)
     return loss.mean()
 
-class NeuralProcessModel(nn.Module):
+class NeuralProcessModel(Model):
     def __init__(
         self,
         x_train: torch.Tensor,
@@ -208,7 +212,7 @@ class NeuralProcessModel(nn.Module):
             init_func: A function initializing thee weights.
         """
         super().__init__()
-        self.repr_encoder = REncoder(x_dim+y_dim, r_dim) 
+        self.r_encoder = REncoder(x_dim+y_dim, r_dim) 
         self.z_encoder = ZEncoder(r_dim, z_dim) 
         self.decoder = Decoder(x_dim + z_dim, y_dim) 
         self.z_mu_all = 0
@@ -225,7 +229,7 @@ class NeuralProcessModel(nn.Module):
         x: torch.Tensor,
         y: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        r"""Compute latent parameters from inputs.
+        r"""Compute latent parameters from inputs as a latent distribution.
 
         Args:
             x: Input tensor
@@ -239,7 +243,7 @@ class NeuralProcessModel(nn.Module):
                 - y_t: Target target data.
         """
         xy = torch.cat([x,y], dim=1)
-        rs = self.repr_encoder(xy)
+        rs = self.r_encoder(xy)
         r_agg = rs.mean(dim=0) # Average over samples
         return self.z_encoder(r_agg) # Get mean and variance for q(z|...)
     
@@ -249,7 +253,7 @@ class NeuralProcessModel(nn.Module):
         logvar: torch.Tensor,
         n: int = 1,
     ) -> torch.Tensor:
-        r"""Reparameterization trick for z.
+        r"""Reparameterization trick for z's latent distribution.
 
         Args:
             mu: Tensor representing the Gaussian distribution mean.
@@ -265,7 +269,6 @@ class NeuralProcessModel(nn.Module):
         else:
             eps = torch.autograd.Variable(logvar.data.new(n,self.z_dim).normal_()).to(device)
         
-        # std = torch.exp(0.5 * logvar)
         std = 0.1+ 0.9*torch.sigmoid(logvar)
         return mu + std * eps
 
@@ -282,7 +285,83 @@ class NeuralProcessModel(nn.Module):
         p = torch.distributions.Normal(mu_p, std_p)
         q = torch.distributions.Normal(mu_q, std_q)
         return torch.distributions.kl_divergence(p, q).sum()
+    
+    def posterior(
+        self, 
+        X: torch.Tensor, 
+        observation_noise: bool = False, 
+        posterior_transform: Optional[PosteriorTransform] = None
+    ) -> GPyTorchPosterior:
+        r"""Computes the model's posterior distribution for given input tensors.
+
+        Args:
+            X: Input Tensor
+            observation_noise: Adds observation noise to the covariance if true.
+            posterior_transform: An optional posterior transformation.
+
+        Returns:
+            GPyTorchPosterior: The posterior distribution object utilizing
+            GPyTorch and MultivariateNormal.
+        """
+        mean = self.decoder(X, self.sample_z())
+        covariance = torch.eye(X.size(0)) * 0.1
+        if (observation_noise):
+            covariance = covariance + 0.01
+        mvn = MultivariateNormal(mean, covariance)
+        return GPyTorchPosterior(mvn)
         
+    def condition_on_observations(
+        self, 
+        X: torch.Tensor, 
+        Y: torch.Tensor
+    ) -> "NeuralProcessModel":
+        r"""Condition the model on new observations.
+
+        Args:
+            X: Input tensor.
+            Y: Target tensor.
+
+        Returns:
+            NeuralProcessModel: The current model with new conditioned train data.
+        """
+        self.train_data = (X, Y)
+        return self
+    
+    def load_state_dict(
+        self, 
+        state_dict: dict, 
+        strict: bool = True
+    ) -> None:
+        """
+        Initialize the fully Bayesian model before loading the state dict.
+
+        Args:
+            state_dict (dict): A dictionary containing the parameters.
+            strict (bool): Case matching strictness.
+        """
+        super().load_state_dict(state_dict, strict=strict)
+
+    def transform_inputs(
+        self,
+        X: torch.Tensor,
+        input_transform: Optional[Module] = None,
+    ) -> torch.Tensor:
+        r"""Transform inputs.
+
+        Args:
+            X: A tensor of inputs
+            input_transform: A Module that performs the input transformation.
+
+        Returns:
+            torch.Tensor: A tensor of transformed inputs
+        """
+        if input_transform is not None:
+            input_transform.to(X)
+            return input_transform(X)
+        try:
+            return self.input_transform(X)
+        except AttributeError:
+            return X
 
     def forward(
         self,
@@ -333,56 +412,56 @@ class NeuralProcessModel(nn.Module):
         mask = np.random.choice(ind, size=n_context, replace=False)
         return x[mask], y[mask], np.delete(x, mask, axis=0), np.delete(y, mask, axis=0)
     
-    def train(
-        self,
-        n_epochs: int,
-        x_train: torch.Tensor,
-        y_train: torch.Tensor,
-        n_display: int = 500,
-        N = 100000,
-    ) -> Tuple[List[float], torch.Tensor, torch.Tensor]:
-        r"""Training loop for the NP model.
+    # def train(
+    #     self,
+    #     n_epochs: int,
+    #     x_train: torch.Tensor,
+    #     y_train: torch.Tensor,
+    #     n_display: int = 500,
+    #     N = 100000,
+    # ) -> Tuple[List[float], torch.Tensor, torch.Tensor]:
+    #     r"""Training loop for the NP model.
 
-        Args:
-            n_epochs: An int representing the # of training epochs.
-            x_train: Training input data.
-            y_train: Training target data.
-            n_display: Frequency of logs.
-            N: An int representing population size.
+    #     Args:
+    #         n_epochs: An int representing the # of training epochs.
+    #         x_train: Training input data.
+    #         y_train: Training target data.
+    #         n_display: Frequency of logs.
+    #         N: An int representing population size.
 
-        Returns:
-            Tuple[List[float], torch.Tensor, torch.Tensor]: 
-                - train_losses: Recorded training losses.
-                - z_mu_all: Posterior mean of z.
-                - z_logvar_all: Posterior mog variance of z.
-        """
-        train_losses = []
+    #     Returns:
+    #         Tuple[List[float], torch.Tensor, torch.Tensor]: 
+    #             - train_losses: Recorded training losses.
+    #             - z_mu_all: Posterior mean of z.
+    #             - z_logvar_all: Posterior mog variance of z.
+    #     """
+    #     train_losses = []
         
-        for t in range(n_epochs): 
-            self.optimizer.zero_grad()
-            #Generate data and process
-            x_context, y_context, x_target, y_target = self.random_split_context_target(
-                                    x_train, y_train, int(len(y_train)*0.1)) #0.25, 0.5, 0.05,0.015, 0.01
-            # print(x_context.shape, y_context.shape, x_target.shape, y_target.shape)    
+    #     for t in range(n_epochs): 
+    #         self.optimizer.zero_grad()
+    #         #Generate data and process
+    #         x_context, y_context, x_target, y_target = self.random_split_context_target(
+    #                                 x_train, y_train, int(len(y_train)*0.1)) #0.25, 0.5, 0.05,0.015, 0.01
+    #         # print(x_context.shape, y_context.shape, x_target.shape, y_target.shape)    
 
-            x_c = torch.from_numpy(x_context).float().to(device)
-            x_t = torch.from_numpy(x_target).float().to(device)
-            y_c = torch.from_numpy(y_context).float().to(device)
-            y_t = torch.from_numpy(y_target).float().to(device)
+    #         x_c = torch.from_numpy(x_context).float().to(device)
+    #         x_t = torch.from_numpy(x_target).float().to(device)
+    #         y_c = torch.from_numpy(y_context).float().to(device)
+    #         y_t = torch.from_numpy(y_target).float().to(device)
 
-            x_ct = torch.cat([x_c, x_t], dim=0).float().to(device)
-            y_ct = torch.cat([y_c, y_t], dim=0).float().to(device)
+    #         x_ct = torch.cat([x_c, x_t], dim=0).float().to(device)
+    #         y_ct = torch.cat([y_c, y_t], dim=0).float().to(device)
 
-            y_pred = self.forward(x_t, x_c, y_c, x_ct, y_ct)
+    #         y_pred = self.forward(x_t, x_c, y_c, x_ct, y_ct)
 
-            train_loss = N * MAE(y_pred, y_t)/100 + self.KLD_gaussian()
+    #         train_loss = N * MAE(y_pred, y_t)/100 + self.KLD_gaussian()
             
-            train_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.parameters(), 5) #10
-            self.optimizer.step()
+    #         train_loss.backward()
+    #         torch.nn.utils.clip_grad_norm_(self.parameters(), 5) #10
+    #         self.optimizer.step()
 
-            if t % (n_display/10) ==0:
-                train_losses.append(train_loss.item())
+    #         if t % (n_display/10) ==0:
+    #             train_losses.append(train_loss.item())
             
-        return train_losses, self.z_mu_all, self.z_logvar_all
+    #     return train_losses, self.z_mu_all, self.z_logvar_all
     
