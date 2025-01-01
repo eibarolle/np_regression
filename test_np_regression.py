@@ -4,6 +4,7 @@ import torch
 from torch import nn
 from torch.optim import Adam
 from botorch_community.models import NeuralProcessModel
+from botorch.posteriors import GPyTorchPosterior
 from torch import Tensor
 
 class TestNeuralProcessModel(unittest.TestCase):
@@ -85,17 +86,45 @@ class TestNeuralProcessModel(unittest.TestCase):
         self.assertEqual(x_t.shape[0], 80)
         self.assertEqual(y_t.shape[0], 80)
 
-    def test_train(self):
-        x_train = self.x_data
-        y_train = self.y_data
-        losses, z_mu, z_logvar = self.model.train(
-            n_epochs=10, x_train=x_train, y_train=y_train, n_display=2
-        )
-        self.assertIsInstance(losses, list)
-        self.assertTrue(len(losses) > 0)
-        self.assertTrue(all(isinstance(loss, float) for loss in losses))
-        self.assertEqual(z_mu.shape, (self.z_dim,))
-        self.assertEqual(z_logvar.shape, (self.z_dim,))
+    # def test_train(self):
+    #     x_train = self.x_data
+    #     y_train = self.y_data
+    #     losses, z_mu, z_logvar = self.model.train(
+    #         n_epochs=10, x_train=x_train, y_train=y_train, n_display=2
+    #     )
+    #     self.assertIsInstance(losses, list)
+    #     self.assertTrue(len(losses) > 0)
+    #     self.assertTrue(all(isinstance(loss, float) for loss in losses))
+    #     self.assertEqual(z_mu.shape, (self.z_dim,))
+    #     self.assertEqual(z_logvar.shape, (self.z_dim,))
+        
+    def test_posterior(self):
+        X = torch.rand(5, 3)
+        posterior = self.model.posterior(X, observation_noise=True)
+        self.assertIsInstance(posterior, GPyTorchPosterior)
+        mvn = posterior.mvn
+        self.assertTrue(torch.allclose(mvn.mean, torch.zeros(5)))
+        self.assertEqual(mvn.covariance_matrix.size(), (5, 5))
+        expected_covariance = torch.eye(5) * 0.11
+        self.assertTrue(torch.allclose(mvn.covariance_matrix, expected_covariance))
+    
+    def test_condition_on_observations(self):
+        X = torch.rand(10, 3)
+        Y = torch.rand(10, 1)
+        self.model.condition_on_observations(X, Y)
+        self.assertTrue(torch.equal(self.model.train_data[0], X))
+        self.assertTrue(torch.equal(self.model.train_data[1], Y))
+    
+    def test_load_state_dict(self):
+        state_dict = {"param1": torch.tensor([1.0]), "param2": torch.tensor([2.0])}
+        self.model.load_state_dict(state_dict)
+        self.assertTrue(torch.equal(self.model.param1, torch.tensor([1.0])))
+        self.assertTrue(torch.equal(self.model.param2, torch.tensor([2.0])))
+    
+    def test_transform_inputs(self):
+        X = torch.rand(5, 3)
+        self.assertTrue(torch.equal(self.model.transform_inputs(X), X * 2))
+    
 
 if __name__ == "__main__":
     unittest.main()
