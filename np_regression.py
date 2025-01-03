@@ -14,7 +14,8 @@ Contributor: eibarolle
 import numpy as np
 from numpy.random import binomial
 import torch
-import matplotlib.pyplot as plt
+import torch.nn as nn
+import matplotlib.pyplot as plts
 # %matplotlib inline
 from botorch.models.model import Model
 from botorch.posteriors import GPyTorchPosterior
@@ -31,39 +32,64 @@ from gpytorch.distributions import MultivariateNormal
 
 device = torch.device("cpu")
 
-
-"""# CNP"""
-
 #reference: https://chrisorm.github.io/NGP.html
-class REncoder(torch.nn.Module):
-    def __init__(self,
-        in_dim: int,
-        out_dim: int,
-        init_func: Optional[Callable] = torch.nn.init.normal_,
-        l1_size: int = 16,
-        l2_size: int = 8
+class MLP(nn.Module):
+    def __init__(
+        self, 
+        input_dim: int, 
+        output_dim: int, 
+        hidden_dims: List[int], 
+        activation: Callable = nn.Sigmoid,
+        init_func: Optional[Callable] = nn.init.normal_
+    ) -> None:
+        r"""
+        A modular implementation of a Multilayer Perceptron (MLP).
+        
+        Args:
+            input_dim: An int representing the total input dimensionality.
+            output_dim: An int representing the total encoded dimensionality.
+            hidden_dims: A list of integers representing the # of units in each hidden dimension.
+            activation: Activation function applied between layers.
+            init_func: A function initializing the weights.
+        """
+        super().__init__()
+        layers = []
+        prev_dim = input_dim
+
+        for hidden_dim in hidden_dims:
+            layer = nn.Linear(prev_dim, hidden_dim)
+            if init_func is not None:
+                init_func(layer.weight)
+            layers.append(layer)
+            layers.append(activation())
+            prev_dim = hidden_dim
+
+        final_layer = nn.Linear(prev_dim, output_dim)
+        if init_func is not None:
+            init_func(final_layer.weight)
+        layers.append(final_layer)
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x)
+    
+
+class REncoder(nn.Module):
+    def __init__(
+        self,
+        input_dim: int, 
+        output_dim: int, 
+        hidden_dims: List[int]
     ) -> None:
         r"""Encodes inputs of the form (x_i,y_i) into representations, r_i.
 
         Args:
-            in_dim: An int representing the total input dimensionality.
-            out_dim: An int representing the total encoded dimensionality.
-            init_func: A function initializing the weights.
-            l1_size: An int representing the L1 Regression size.
-            l2_size: An int representing the L2 Regression size.
+            input_dim: An int representing the total input dimensionality.
+            output_dim: An int representing the total encoded dimensionality.
+            hidden_dims: A list of integers representing the # of units in each hidden dimension.
         """
-        super(REncoder, self).__init__()
-        
-        self.l1 = torch.nn.Linear(in_dim, l1_size)
-        self.l2 = torch.nn.Linear(l1_size, l2_size)
-        self.l3 = torch.nn.Linear(l2_size, out_dim)
-        self.a1 = torch.nn.Sigmoid()
-        self.a2 = torch.nn.Sigmoid()
-        
-        if init_func is not None:
-            init_func(self.l1.weight)
-            init_func(self.l2.weight)
-            init_func(self.l3.weight)
+        super().__init__()
+        self.mlp = MLP(input_dim, output_dim, hidden_dims)
         
     def forward(
         self,
@@ -77,32 +103,25 @@ class REncoder(torch.nn.Module):
         Returns:
             torch.Tensor: Encoded representations
         """
-        return self.l3(self.a2(self.l2(self.a1(self.l1(inputs)))))
+        return self.mlp(inputs)
 
-class ZEncoder(torch.nn.Module):
+class ZEncoder(nn.Module):
     def __init__(self,
-        in_dim: int,
-        out_dim: int,
-        init_func: Optional[Callable] = torch.nn.init.normal_,
+        input_dim: int,
+        output_dim: int,
+        hidden_dims: List[int],
     ) -> None:
         r"""Takes an r representation and produces the mean & standard 
         deviation of the normally distributed function encoding, z.
         
         Args:
-            in_dim: An int representing r's aggregated dimensionality.
-            out_dim: An int representing z's latent dimensionality.
-            init_func: A function initializing the weights.
+            input_dim: An int representing r's aggregated dimensionality.
+            output_dim: An int representing z's latent dimensionality.
+            hidden_dims: A list of integers representing the # of units in each hidden dimension.
         """
-        super(ZEncoder, self).__init__()
-        self.m1_size = out_dim
-        self.logvar1_size = out_dim
-        
-        self.m1 = torch.nn.Linear(in_dim, self.m1_size)
-        self.logvar1 = torch.nn.Linear(in_dim, self.m1_size)
-
-        if init_func is not None:
-            init_func(self.m1.weight)
-            init_func(self.logvar1.weight)
+        super().__init__()
+        self.mean_net = MLP(input_dim, output_dim, hidden_dims)
+        self.logvar_net = MLP(input_dim, output_dim, hidden_dims)
         
     def forward(
         self,
@@ -118,38 +137,24 @@ class ZEncoder(torch.nn.Module):
                 - Mean of the latent Gaussian distribution.
                 - Log variance of the latent Gaussian distribution.
         """
-        return self.m1(inputs), self.logvar1(inputs)
+        return self.mean_net(inputs), self.logvar_net(inputs)
     
 class Decoder(torch.nn.Module):
-    def __init__(self,
-        in_dim: int,
-        out_dim: int,
-        init_func: Optional[Callable] = torch.nn.init.normal_,
-        l1_size: int = 8,
-        l2_size: int = 16
+    def __init__(
+        self,
+        input_dim: int, 
+        output_dim: int, 
+        hidden_dims: List[int]
     ) -> None:
         r"""Takes the x star points, along with a 'function encoding', z, and makes predictions.
         
         Args:
-            in_dim: An int representing the total input dimensionality.
-            out_dim: An int representing the predicted outputs' dimensionality.
-            init_func: A function initializing the weights.
-            l1_size: An int representing the L1 Regression size.
-            l2_size: An int representing the L2 Regression size.
+            input_dim: An int representing the total input dimensionality.
+            output_dim: An int representing the total encoded dimensionality.
+            hidden_dims: A list of integers representing the # of units in each hidden dimension.
         """
-        super(Decoder, self).__init__()
-        
-        self.l1 = torch.nn.Linear(in_dim, l1_size)
-        self.l2 = torch.nn.Linear(l1_size, l2_size)
-        self.l3 = torch.nn.Linear(l2_size, out_dim)
-        
-        if init_func is not None:
-            init_func(self.l1.weight)
-            init_func(self.l2.weight)
-            init_func(self.l3.weight)
-        
-        self.a1 = torch.nn.Sigmoid()
-        self.a2 = torch.nn.Sigmoid()
+        super().__init__()
+        self.mlp = MLP(input_dim, output_dim, hidden_dims)
         
     def forward(
         self,
@@ -165,12 +170,9 @@ class Decoder(torch.nn.Module):
         Returns:
             torch.Tensor: Predicted target values.
         """
-        zs_reshaped = z.unsqueeze(-1).expand(z.shape[0], x_pred.shape[0]).transpose(0,1)
-        xpred_reshaped = x_pred
-        
-        xz = torch.cat([xpred_reshaped, zs_reshaped], dim=1)
-
-        return self.l3(self.a2(self.l2(self.a1(self.l1(xz))))).squeeze(-1)
+        z_expanded = z.unsqueeze(0).expand(x_pred.size(0), -1)
+        xz = torch.cat([x_pred, z_expanded], dim=-1)
+        return self.mlp(xz)
 
 def MAE(
     pred: torch.Tensor,
@@ -193,6 +195,9 @@ class NeuralProcessModel(Model):
         self,
         x_train: torch.Tensor,
         y_train: torch.Tensor,
+        r_hidden_dims: List[int], 
+        z_hidden_dims: List[int], 
+        decoder_hidden_dims: List[int],
         n_epochs: int = 5000,
         x_dim: int = 2,
         y_dim: int = 100,
@@ -205,6 +210,9 @@ class NeuralProcessModel(Model):
         Args:
             x_train: Training input data.
             y_train: Training target data.
+            r_hidden_dims: Hidden Dimensions/Layer list for REncoder
+            z_hidden_dims: Hidden Dimensions/Layer list for ZEncoder
+            decoder_hidden_dims: Hidden Dimensions/Layer for Decoder
             x_dim: Int dimensionality of input data x.
             y_dim: Int dimensionality of target data y.
             r_dim: Int dimensionality of representation r.
@@ -212,17 +220,16 @@ class NeuralProcessModel(Model):
             init_func: A function initializing thee weights.
         """
         super().__init__()
-        self.r_encoder = REncoder(x_dim+y_dim, r_dim) 
-        self.z_encoder = ZEncoder(r_dim, z_dim) 
-        self.decoder = Decoder(x_dim + z_dim, y_dim) 
+        self.r_encoder = REncoder(x_dim+y_dim, r_dim, r_hidden_dims) 
+        self.z_encoder = ZEncoder(r_dim, z_dim, z_hidden_dims) 
+        self.decoder = Decoder(x_dim + z_dim, y_dim, decoder_hidden_dims) 
         self.z_mu_all = 0
         self.z_logvar_all = 0
         self.z_mu_context = 0
         self.z_logvar_context = 0
         self.zs = 0
-        self.zdim = z_dim
         self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
-        self.train(n_epochs, x_train, y_train)
+        #self.train(n_epochs, x_train, y_train)
     
     def data_to_z_params(
         self,
@@ -244,8 +251,8 @@ class NeuralProcessModel(Model):
         """
         xy = torch.cat([x,y], dim=1)
         rs = self.r_encoder(xy)
-        r_agg = rs.mean(dim=0) # Average over samples
-        return self.z_encoder(r_agg) # Get mean and variance for q(z|...)
+        r_agg = rs.mean(dim=0)
+        return self.z_encoder(r_agg) 
     
     def sample_z(
         self,
@@ -269,7 +276,7 @@ class NeuralProcessModel(Model):
         else:
             eps = torch.autograd.Variable(logvar.data.new(n,self.z_dim).normal_()).to(device)
         
-        std = 0.1+ 0.9*torch.sigmoid(logvar)
+        std = 0.1 + 0.9 * torch.sigmoid(logvar)
         return mu + std * eps
 
     def KLD_gaussian(self) -> torch.Tensor:
@@ -278,12 +285,10 @@ class NeuralProcessModel(Model):
         Returns:
             torch.Tensor: A tensor representing the KLD.
         """
-        mu_q, logvar_q, mu_p, logvar_p = self.z_mu_all, self.z_logvar_all, self.z_mu_context, self.z_logvar_context
-
-        std_q = 0.1+ 0.9*torch.sigmoid(logvar_q)
-        std_p = 0.1+ 0.9*torch.sigmoid(logvar_p)
-        p = torch.distributions.Normal(mu_p, std_p)
-        q = torch.distributions.Normal(mu_q, std_q)
+        std_q = 0.1+ 0.9*torch.sigmoid(self.z_logvar_all)
+        std_p = 0.1+ 0.9*torch.sigmoid(self.z_logvar_context)
+        p = torch.distributions.Normal(self.z_mu_context, std_p)
+        q = torch.distributions.Normal(self.z_mu_all, std_q)
         return torch.distributions.kl_divergence(p, q).sum()
     
     def posterior(
@@ -368,8 +373,6 @@ class NeuralProcessModel(Model):
         x_t: torch.Tensor,
         x_c: torch.Tensor,
         y_c: torch.Tensor,
-        x_ct: torch.Tensor,
-        y_ct: torch.Tensor,
     ) -> torch.Tensor:
         r"""Forward pass for the model.
 
@@ -377,17 +380,15 @@ class NeuralProcessModel(Model):
             x_t: Target input data.
             x_c: Context input data.
             y_c: Context target data.
-            x_ct: Combined input data.
-            y_ct: Combined target data.
 
         Returns:
             torch.Tensor: Predicted target values.
         """
         
-        self.z_mu_all, self.z_logvar_all = self.data_to_z_params(x_ct, y_ct)
+        self.z_mu_all, self.z_logvar_all = self.data_to_z_params(torch.cat([x_c, x_t]), torch.cat([y_c, x_t]))
         self.z_mu_context, self.z_logvar_context = self.data_to_z_params(x_c, y_c)
-        self.zs = self.sample_z(self.z_mu_all, self.z_logvar_all)
-        return self.decoder(x_t, self.zs)
+        z = self.sample_z(self.z_mu_all, self.z_logvar_all)
+        return self.decoder(x_t, z)
     
     def random_split_context_target(
         x: torch.Tensor,

@@ -72,9 +72,7 @@ class TestNeuralProcessModel(unittest.TestCase):
         x_t = torch.rand(10, self.x_dim)
         x_c = torch.rand(5, self.x_dim)
         y_c = torch.rand(5, self.y_dim)
-        x_ct = torch.cat([x_c, x_t], dim=0)
-        y_ct = torch.cat([y_c, torch.rand(10, self.y_dim)], dim=0)
-        output = self.model(x_t, x_c, y_c, x_ct, y_ct)
+        output = self.model(x_t, x_c, y_c)
         self.assertEqual(output.shape, (10, self.y_dim))
 
     def test_random_split_context_target(self):
