@@ -9,6 +9,9 @@ from torch import Tensor
 
 class TestNeuralProcessModel(unittest.TestCase):
     def initialize(self):
+        self.r_hidden_dims = [16, 16]
+        self.z_hidden_dims = [32, 32]
+        self.decoder_hidden_dims = [16, 16]
         self.x_dim = 2
         self.y_dim = 1
         self.r_dim = 8
@@ -77,28 +80,16 @@ class TestNeuralProcessModel(unittest.TestCase):
 
     def test_random_split_context_target(self):
         x_c, y_c, x_t, y_t = self.model.random_split_context_target(
-            self.x_data, self.y_data, n_context=20
+            self.x_data, self.y_data, 20, 0
         )
         self.assertEqual(x_c.shape[0], 20)
         self.assertEqual(y_c.shape[0], 20)
         self.assertEqual(x_t.shape[0], 80)
         self.assertEqual(y_t.shape[0], 80)
-
-    # def test_train(self):
-    #     x_train = self.x_data
-    #     y_train = self.y_data
-    #     losses, z_mu, z_logvar = self.model.train(
-    #         n_epochs=10, x_train=x_train, y_train=y_train, n_display=2
-    #     )
-    #     self.assertIsInstance(losses, list)
-    #     self.assertTrue(len(losses) > 0)
-    #     self.assertTrue(all(isinstance(loss, float) for loss in losses))
-    #     self.assertEqual(z_mu.shape, (self.z_dim,))
-    #     self.assertEqual(z_logvar.shape, (self.z_dim,))
         
     def test_posterior(self):
         X = torch.rand(5, 3)
-        posterior = self.model.posterior(X, observation_noise=True)
+        posterior = self.model.posterior(X, 0.1, 0.01, observation_noise=True)
         self.assertIsInstance(posterior, GPyTorchPosterior)
         mvn = posterior.mvn
         self.assertTrue(torch.allclose(mvn.mean, torch.zeros(5)))

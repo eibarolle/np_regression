@@ -11,6 +11,7 @@ References:
 Contributor: eibarolle
 """
 
+import copy
 import numpy as np
 from numpy.random import binomial
 import torch
@@ -29,8 +30,10 @@ from torch.nn import Module, ModuleDict, ModuleList
 from sklearn import preprocessing
 from scipy.stats import multivariate_normal
 from gpytorch.distributions import MultivariateNormal
+from botorch.posteriors import MultivariateNormalPosterior
 
 device = torch.device("cpu")
+# Account for different acquisitions
 
 #reference: https://chrisorm.github.io/NGP.html
 class MLP(nn.Module):
@@ -49,8 +52,8 @@ class MLP(nn.Module):
             input_dim: An int representing the total input dimensionality.
             output_dim: An int representing the total encoded dimensionality.
             hidden_dims: A list of integers representing the # of units in each hidden dimension.
-            activation: Activation function applied between layers.
-            init_func: A function initializing the weights.
+            activation: Activation function applied between layers, defaults to nn.Sigmoid.
+            init_func: A function initializing the weights, defaults to nn.init.normal_.
         """
         super().__init__()
         layers = []
@@ -79,7 +82,9 @@ class REncoder(nn.Module):
         self,
         input_dim: int, 
         output_dim: int, 
-        hidden_dims: List[int]
+        hidden_dims: List[int],
+        activation: Callable = nn.Sigmoid,
+        init_func: Optional[Callable] = nn.init.normal_
     ) -> None:
         r"""Encodes inputs of the form (x_i,y_i) into representations, r_i.
 
@@ -87,9 +92,11 @@ class REncoder(nn.Module):
             input_dim: An int representing the total input dimensionality.
             output_dim: An int representing the total encoded dimensionality.
             hidden_dims: A list of integers representing the # of units in each hidden dimension.
+            activation: Activation function applied between layers, defaults to nn.Sigmoid.
+            init_func: A function initializing the weights, defaults to nn.init.normal_.
         """
         super().__init__()
-        self.mlp = MLP(input_dim, output_dim, hidden_dims)
+        self.mlp = MLP(input_dim, output_dim, hidden_dims, activation=activation, init_func=init_func)
         
     def forward(
         self,
@@ -110,6 +117,8 @@ class ZEncoder(nn.Module):
         input_dim: int,
         output_dim: int,
         hidden_dims: List[int],
+        activation: Callable = nn.Sigmoid,
+        init_func: Optional[Callable] = nn.init.normal_
     ) -> None:
         r"""Takes an r representation and produces the mean & standard 
         deviation of the normally distributed function encoding, z.
@@ -118,10 +127,12 @@ class ZEncoder(nn.Module):
             input_dim: An int representing r's aggregated dimensionality.
             output_dim: An int representing z's latent dimensionality.
             hidden_dims: A list of integers representing the # of units in each hidden dimension.
+            activation: Activation function applied between layers, defaults to nn.Sigmoid.
+            init_func: A function initializing the weights, defaults to nn.init.normal_.
         """
         super().__init__()
-        self.mean_net = MLP(input_dim, output_dim, hidden_dims)
-        self.logvar_net = MLP(input_dim, output_dim, hidden_dims)
+        self.mean_net = MLP(input_dim, output_dim, hidden_dims, activation=activation, init_func=init_func)
+        self.logvar_net = MLP(input_dim, output_dim, hidden_dims, activation=activation, init_func=init_func)
         
     def forward(
         self,
@@ -144,7 +155,9 @@ class Decoder(torch.nn.Module):
         self,
         input_dim: int, 
         output_dim: int, 
-        hidden_dims: List[int]
+        hidden_dims: List[int],
+        activation: Callable = nn.Sigmoid,
+        init_func: Optional[Callable] = nn.init.normal_
     ) -> None:
         r"""Takes the x star points, along with a 'function encoding', z, and makes predictions.
         
@@ -152,9 +165,11 @@ class Decoder(torch.nn.Module):
             input_dim: An int representing the total input dimensionality.
             output_dim: An int representing the total encoded dimensionality.
             hidden_dims: A list of integers representing the # of units in each hidden dimension.
+            activation: Activation function applied between layers, defaults to nn.Sigmoid.
+            init_func: A function initializing the weights, defaults to nn.init.normal_.
         """
         super().__init__()
-        self.mlp = MLP(input_dim, output_dim, hidden_dims)
+        self.mlp = MLP(input_dim, output_dim, hidden_dims, activation=activation, init_func=init_func)
         
     def forward(
         self,
@@ -181,7 +196,7 @@ def MAE(
     r"""Mean Absolute Error loss function.
 
     Args:
-        pred: The redicted values tensor.
+        pred: The predicted values tensor.
         target: The target values tensor.
 
     Returns:
@@ -193,23 +208,19 @@ def MAE(
 class NeuralProcessModel(Model):
     def __init__(
         self,
-        x_train: torch.Tensor,
-        y_train: torch.Tensor,
         r_hidden_dims: List[int], 
         z_hidden_dims: List[int], 
         decoder_hidden_dims: List[int],
-        n_epochs: int = 5000,
-        x_dim: int = 2,
-        y_dim: int = 100,
-        r_dim: int = 8,
-        z_dim: int = 8,
+        x_dim: int,
+        y_dim: int,
+        r_dim: int,
+        z_dim: int,
+        activation: Callable = nn.Sigmoid,
         init_func: Optional[Callable] = torch.nn.init.normal_,
     ) -> None:
         r"""Diffusion Convolutional Recurrent Neural Network Model Implementation.
 
         Args:
-            x_train: Training input data.
-            y_train: Training target data.
             r_hidden_dims: Hidden Dimensions/Layer list for REncoder
             z_hidden_dims: Hidden Dimensions/Layer list for ZEncoder
             decoder_hidden_dims: Hidden Dimensions/Layer for Decoder
@@ -217,30 +228,34 @@ class NeuralProcessModel(Model):
             y_dim: Int dimensionality of target data y.
             r_dim: Int dimensionality of representation r.
             z_dim: Int dimensionality of latent variable z.
-            init_func: A function initializing thee weights.
+            activation: Activation function applied between layers, defaults to nn.Sigmoid.
+            init_func: A function initializing the weights, defaults to nn.init.normal_.
         """
         super().__init__()
-        self.r_encoder = REncoder(x_dim+y_dim, r_dim, r_hidden_dims) 
-        self.z_encoder = ZEncoder(r_dim, z_dim, z_hidden_dims) 
-        self.decoder = Decoder(x_dim + z_dim, y_dim, decoder_hidden_dims) 
-        self.z_mu_all = 0
-        self.z_logvar_all = 0
-        self.z_mu_context = 0
-        self.z_logvar_context = 0
-        self.zs = 0
-        self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        self.r_encoder = REncoder(x_dim+y_dim, r_dim, r_hidden_dims, activation=activation, init_func=init_func) 
+        self.z_encoder = ZEncoder(r_dim, z_dim, z_hidden_dims, activation=activation, init_func=init_func) 
+        self.decoder = Decoder(x_dim + z_dim, y_dim, decoder_hidden_dims, activation=activation, init_func=init_func) 
+        self.z_mu_all = None
+        self.z_logvar_all = None
+        self.z_mu_context = None
+        self.z_logvar_context = None
+        # self.optimizer = torch.optim.Adam(self.parameters(), lr=1e-3) # Look at BoTorch native versions
         #self.train(n_epochs, x_train, y_train)
     
     def data_to_z_params(
         self,
         x: torch.Tensor,
         y: torch.Tensor,
+        xy_dim: int = 1,
+        r_dim: int = 0,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         r"""Compute latent parameters from inputs as a latent distribution.
 
         Args:
             x: Input tensor
             y: Target tensor
+            xy_dim: Combined Input Dimension as int, defaults as 1
+            r_dim: Combined Target Dimension as int, defaults as 0.
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: 
@@ -249,9 +264,9 @@ class NeuralProcessModel(Model):
                 - x_t: Target input data.
                 - y_t: Target target data.
         """
-        xy = torch.cat([x,y], dim=1)
+        xy = torch.cat([x,y], dim=xy_dim)
         rs = self.r_encoder(xy)
-        r_agg = rs.mean(dim=0)
+        r_agg = rs.mean(dim=r_dim)
         return self.z_encoder(r_agg) 
     
     def sample_z(
@@ -259,34 +274,50 @@ class NeuralProcessModel(Model):
         mu: torch.Tensor,
         logvar: torch.Tensor,
         n: int = 1,
+        min_std: float = 0.1,
+        scaler: float = 0.9
     ) -> torch.Tensor:
         r"""Reparameterization trick for z's latent distribution.
 
         Args:
             mu: Tensor representing the Gaussian distribution mean.
             logvar: Tensor representing the log variance of the Gaussian distribution.
-            n: Int representing the # of samples.
-            z_dim: Int dimensionality of latent variable z.
+            n: Int representing the # of samples, defaults to 1.
+            min_std: Float representing the minimum possible standardized std, defaults to 0.1.
+            scaler: Float scaling the std, defaults to 0.9.
 
         Returns:
             torch.Tensor: Samples from the Gaussian distribution.
     """
+        if min_std <= 0 or scaler <= 0:
+            raise ValueError()
         if n == 1:
             eps = torch.autograd.Variable(logvar.data.new(self.z_dim).normal_()).to(device)
         else:
             eps = torch.autograd.Variable(logvar.data.new(n,self.z_dim).normal_()).to(device)
         
-        std = 0.1 + 0.9 * torch.sigmoid(logvar)
+        std = min_std + scaler * torch.sigmoid(logvar) 
         return mu + std * eps
 
-    def KLD_gaussian(self) -> torch.Tensor:
+    def KLD_gaussian(
+        self,
+        min_std: float = 0.1,
+        scaler: float = 0.9
+    ) -> torch.Tensor:
         r"""Analytical KLD between 2 Gaussian Distributions.
 
+        Args:
+            min_std: Float representing the minimum possible standardized std, defaults to 0.1.
+            scaler: Float scaling the std, defaults to 0.9.
+            
         Returns:
             torch.Tensor: A tensor representing the KLD.
         """
-        std_q = 0.1+ 0.9*torch.sigmoid(self.z_logvar_all)
-        std_p = 0.1+ 0.9*torch.sigmoid(self.z_logvar_context)
+        
+        if min_std <= 0 or scaler <= 0:
+            raise ValueError()
+        std_q = min_std + scaler * torch.sigmoid(self.z_logvar_all)
+        std_p = min_std + scaler * torch.sigmoid(self.z_logvar_context)
         p = torch.distributions.Normal(self.z_mu_context, std_p)
         q = torch.distributions.Normal(self.z_mu_all, std_q)
         return torch.distributions.kl_divergence(p, q).sum()
@@ -294,26 +325,33 @@ class NeuralProcessModel(Model):
     def posterior(
         self, 
         X: torch.Tensor, 
+        covariance_multiplier: float,
+        observation_constant: float,
         observation_noise: bool = False, 
-        posterior_transform: Optional[PosteriorTransform] = None
-    ) -> GPyTorchPosterior:
+        posterior_transform: Optional[PosteriorTransform] = None,
+    ) -> MultivariateNormalPosterior:
         r"""Computes the model's posterior distribution for given input tensors.
 
         Args:
             X: Input Tensor
-            observation_noise: Adds observation noise to the covariance if true.
-            posterior_transform: An optional posterior transformation.
+            covariance_multiplier: Float scaling the covariance.
+            observation_constant: Float representing the noise constant.
+            observation_noise: Adds observation noise to the covariance if True, defaults to False.
+            posterior_transform: An optional posterior transformation, defaults to None.
 
         Returns:
-            GPyTorchPosterior: The posterior distribution object utilizing
-            GPyTorch and MultivariateNormal.
+            MultivariateNormalPosterior: The posterior distribution object 
+            utilizing MultivariateNormal.
         """
         mean = self.decoder(X, self.sample_z())
-        covariance = torch.eye(X.size(0)) * 0.1
+        covariance = torch.eye(X.size(0)) * covariance_multiplier
         if (observation_noise):
-            covariance = covariance + 0.01
+            covariance = covariance + observation_constant
         mvn = MultivariateNormal(mean, covariance)
-        return GPyTorchPosterior(mvn)
+        posterior = MultivariateNormalPosterior(mvn)
+        if posterior_transform is not None:
+            posterior = posterior_transform(posterior)
+        return posterior
         
     def condition_on_observations(
         self, 
@@ -329,8 +367,10 @@ class NeuralProcessModel(Model):
         Returns:
             NeuralProcessModel: The current model with new conditioned train data.
         """
-        self.train_data = (X, Y)
-        return self
+        new_copy = copy.deepcopy(self)
+        new_copy.x_train = X
+        new_copy.y_train = Y
+        return new_copy
     
     def load_state_dict(
         self, 
@@ -373,6 +413,8 @@ class NeuralProcessModel(Model):
         x_t: torch.Tensor,
         x_c: torch.Tensor,
         y_c: torch.Tensor,
+        input_dim: int = 0,
+        target_dim: int = 1
     ) -> torch.Tensor:
         r"""Forward pass for the model.
 
@@ -380,12 +422,21 @@ class NeuralProcessModel(Model):
             x_t: Target input data.
             x_c: Context input data.
             y_c: Context target data.
+            input_dim: Input dimension concatenated
+            target_dim: Target dimension concatendated
 
         Returns:
             torch.Tensor: Predicted target values.
         """
-        
-        self.z_mu_all, self.z_logvar_all = self.data_to_z_params(torch.cat([x_c, x_t]), torch.cat([y_c, x_t]))
+        if any(tensor.numel() == 0 for tensor in [x_t, x_c, y_c]):
+            raise ValueError()
+        if input_dim not in [0, 1]:
+            raise ValueError()
+        if x_c.size(1 - input_dim) != x_t.size(1 - input_dim):
+            raise ValueError()
+        if x_c.size(1 - target_dim) != y_c.size(1 - target_dim):
+            raise ValueError()
+        self.z_mu_all, self.z_logvar_all = self.data_to_z_params(torch.cat([x_c, x_t], dim = input_dim), torch.cat([y_c, x_t], dim = target_dim))
         self.z_mu_context, self.z_logvar_context = self.data_to_z_params(x_c, y_c)
         z = self.sample_z(self.z_mu_all, self.z_logvar_all)
         return self.decoder(x_t, z)
@@ -394,6 +445,7 @@ class NeuralProcessModel(Model):
         x: torch.Tensor,
         y: torch.Tensor,
         n_context: int,
+        axis: int
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         r"""Helper function to split randomly into context and target.
 
@@ -401,6 +453,7 @@ class NeuralProcessModel(Model):
             x: Input data tensor.
             y: Target data tensor.
             n_context (int): Number of context points.
+            axis: Dimension axis as int
 
         Returns:
             Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: 
@@ -409,60 +462,13 @@ class NeuralProcessModel(Model):
                 - x_t: Target input data.
                 - y_t: Target target data.
         """
-        ind = np.arange(x.shape[0])
-        mask = np.random.choice(ind, size=n_context, replace=False)
-        return x[mask], y[mask], np.delete(x, mask, axis=0), np.delete(y, mask, axis=0)
     
-    # def train(
-    #     self,
-    #     n_epochs: int,
-    #     x_train: torch.Tensor,
-    #     y_train: torch.Tensor,
-    #     n_display: int = 500,
-    #     N = 100000,
-    # ) -> Tuple[List[float], torch.Tensor, torch.Tensor]:
-    #     r"""Training loop for the NP model.
+        ind = torch.arange(x.shape[axis])
+        mask = torch.randperm(ind.size(0))[:n_context]  
+        x_c = x.index_select(axis, mask)
+        y_c = y.index_select(axis, mask)
+        x_t = torch.index_select(x, axis, torch.setdiff1d(ind, mask))
+        y_t = torch.index_select(y, axis, torch.setdiff1d(ind, mask))
 
-    #     Args:
-    #         n_epochs: An int representing the # of training epochs.
-    #         x_train: Training input data.
-    #         y_train: Training target data.
-    #         n_display: Frequency of logs.
-    #         N: An int representing population size.
-
-    #     Returns:
-    #         Tuple[List[float], torch.Tensor, torch.Tensor]: 
-    #             - train_losses: Recorded training losses.
-    #             - z_mu_all: Posterior mean of z.
-    #             - z_logvar_all: Posterior mog variance of z.
-    #     """
-    #     train_losses = []
-        
-    #     for t in range(n_epochs): 
-    #         self.optimizer.zero_grad()
-    #         #Generate data and process
-    #         x_context, y_context, x_target, y_target = self.random_split_context_target(
-    #                                 x_train, y_train, int(len(y_train)*0.1)) #0.25, 0.5, 0.05,0.015, 0.01
-    #         # print(x_context.shape, y_context.shape, x_target.shape, y_target.shape)    
-
-    #         x_c = torch.from_numpy(x_context).float().to(device)
-    #         x_t = torch.from_numpy(x_target).float().to(device)
-    #         y_c = torch.from_numpy(y_context).float().to(device)
-    #         y_t = torch.from_numpy(y_target).float().to(device)
-
-    #         x_ct = torch.cat([x_c, x_t], dim=0).float().to(device)
-    #         y_ct = torch.cat([y_c, y_t], dim=0).float().to(device)
-
-    #         y_pred = self.forward(x_t, x_c, y_c, x_ct, y_ct)
-
-    #         train_loss = N * MAE(y_pred, y_t)/100 + self.KLD_gaussian()
-            
-    #         train_loss.backward()
-    #         torch.nn.utils.clip_grad_norm_(self.parameters(), 5) #10
-    #         self.optimizer.step()
-
-    #         if t % (n_display/10) ==0:
-    #             train_losses.append(train_loss.item())
-            
-    #     return train_losses, self.z_mu_all, self.z_logvar_all
+        return x_c, y_c, x_t, y_t
     
