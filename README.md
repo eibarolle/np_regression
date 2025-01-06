@@ -114,13 +114,13 @@
 - Property z_logvar_context: torch.Tensor
   - Gaussian Distribution Latent Log Variance of the context data.
 
-- data_to_z_params(x, y, xy_dim, r_dim)
+- data_to_z_params(x, y, xy_dim = 1, r_dim = 0)
   - Compute latent parameters from inputs as a latent distribution.
   - Parameters:
     - x (torch.Tensor)- Input tensor.
     - y (torch.Tensor)- Target tensor.
-    - xy_dim (int)- Combined Input Dimension
-    - r_dim (int)-  Combined Target Dimension
+    - xy_dim (int)- Combined Input Dimension, defaults as 1.
+    - r_dim (int)-  Combined Target Dimension, defaults as 0.
   - Returns:
     - The mean and log variance of the latent Gaussian distribution as a tuple.
   - Return type:
