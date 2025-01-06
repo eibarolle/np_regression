@@ -1,23 +1,23 @@
 # NP Regression Implementation
 
 ## class MLP(input_dim, output_dim, hidden_dims, activation = nn.Sigmoid, init_func = nn.init.normal_)
-   Bases: nn.Module
-   A modular implementation of a Multilayer Perceptron (MLP).
-   Parameters:
-      * input_dim (int)- Input dimensionality.
-      * output_dim (int)- Output dimensionality.
-      * hidden_dims (List[int])- List specifying the number of units in each hidden layer
-      * activation (Callable)- Activation function applied between layers. Defaults to nn.Sigmoid
-      * init_func (Optional[Callable])- Function to initialize weights. Defaults to nn.init.normal_
+- Bases: nn.Module
+- A modular implementation of a Multilayer Perceptron (MLP).
+- Parameters:
+  - input_dim (int)- Input dimensionality.
+  - output_dim (int)- Output dimensionality.
+  - hidden_dims (List[int])- List specifying the number of units in each hidden layer
+  - activation (Callable)- Activation function applied between layers. Defaults to nn.Sigmoid
+  - init_func (Optional[Callable])- Function to initialize weights. Defaults to nn.init.normal_
 
-   forward(self, x)
-      Performs the forward pass.
-      Parameters:
-         x (torch.Tensor)- Input tensor.
-      Returns:
-         A tensor representing the model after applying the MLP.
-      Return type:
-         torch.Tensor
+  - forward(self, x)
+    - Performs the forward pass.
+    - Parameters:
+      - x (torch.Tensor)- Input tensor.
+    - Returns:
+      - A tensor representing the model after applying the MLP.
+    - Return type:
+      - torch.Tensor
       
 ## class REncoder(input_dim, output_dim, hidden_dims, activation = nn.Sigmoid, init_func = nn.init.normal_)
    Bases: nn.Module
