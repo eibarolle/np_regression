@@ -24,7 +24,17 @@ from typing import Optional
 
 import torch
 from botorch import settings
-from botorch.models import NeuralProcessModel
+from botorch.acquisition.acquisition import MCSamplerMixin
+from botorch.acquisition.bayesian_active_learning import (
+    FullyBayesianAcquisitionFunction,
+)
+from botorch.acquisition.objective import ScalarizedPosteriorTransform
+from botorch.models.fully_bayesian import MCMC_DIM, SaasFullyBayesianSingleTask
+from botorch.models.utils import fantasize as fantasize_flag
+from botorch.models.utils.gpytorch_modules import MIN_INFERRED_NOISE_LEVEL
+from botorch.utils.transforms import concatenate_pending_points, t_batch_mode_transform
+from botorch_community.acquisition.bayesian_active_learning import DISTANCE_METRICS
+from botorch_community.models import NeuralProcessModel
 from torch import Tensor
 
 import torch
@@ -34,7 +44,9 @@ class LatentInformationGain:
     def __init__(
         self, 
         model: NeuralProcessModel, 
-        num_samples: int = 10
+        num_samples: int = 10,
+        min_std: float = 0.1,
+        scaler: float = 0.9
     ) -> None:
         """
         Latent Information Gain (LIG) Acquisition Function, designed for the
@@ -42,10 +54,14 @@ class LatentInformationGain:
 
         Args:
             model: Trained NeuralProcessModel.
-            num_samples (int): Number of samples for calculation.
+            num_samples (int): Number of samples for calculation, defaults to 10.
+            min_std: Float representing the minimum possible standardized std, defaults to 0.1.
+            scaler: Float scaling the std, defaults to 0.9.
         """
         self.model = model
         self.num_samples = num_samples
+        self.min_std = min_std
+        self.scaler = scaler
 
     def acquisition(self, candidate_x, context_x, context_y):
         """
@@ -76,8 +92,8 @@ class LatentInformationGain:
 
             # Computing posterior variables
             z_mu_posterior, z_logvar_posterior = self.model.data_to_z_params(combined_x, combined_y)
-            std_prior = 0.1 + 0.9 * torch.sigmoid(z_logvar_context)
-            std_posterior = 0.1 + 0.9 * torch.sigmoid(z_logvar_posterior)
+            std_prior = self.min_std + self.scaler * torch.sigmoid(z_logvar_context) 
+            std_posterior = self.min_std + self.scaler * torch.sigmoid(z_logvar_posterior)
 
             p = torch.distributions.Normal(z_mu_posterior, std_posterior)
             q = torch.distributions.Normal(z_mu_context, std_prior)

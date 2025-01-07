@@ -12,12 +12,18 @@ class TestLatentInformationGain(unittest.TestCase):
         self.y_dim = 1
         self.r_dim = 8
         self.z_dim = 3
+        self.r_hidden_dims = [16, 16]
+        self.z_hidden_dims = [32, 32]
+        self.decoder_hidden_dims = [16, 16]
         self.num_samples = 10
         self.model = NeuralProcessModel(
-            input_dim=self.x_dim,
-            latent_dim=self.z_dim,
-            r_dim = self.r_dim,
-            output_dim=self.y_dim,
+            r_hidden_dims = self.r_hidden_dims,
+            z_hidden_dims = self.z_hidden_dims,
+            decoder_hidden_dims = self.decoder_hidden_dims,
+            x_dim=self.x_dim,
+            y_dim=self.y_dim,
+            r_dim=self.r_dim,
+            z_dim=self.z_dim,
         )
         self.acquisition_function = LatentInformationGain(
             model=self.model,

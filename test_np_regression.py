@@ -17,6 +17,9 @@ class TestNeuralProcessModel(unittest.TestCase):
         self.r_dim = 8
         self.z_dim = 8
         self.model = NeuralProcessModel(
+            r_hidden_dims = self.r_hidden_dims,
+            z_hidden_dims = self.z_hidden_dims,
+            decoder_hidden_dims = self.decoder_hidden_dims,
             x_dim=self.x_dim,
             y_dim=self.y_dim,
             r_dim=self.r_dim,
