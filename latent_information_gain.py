@@ -24,17 +24,7 @@ from typing import Optional
 
 import torch
 from botorch import settings
-from botorch.acquisition.acquisition import MCSamplerMixin
-from botorch.acquisition.bayesian_active_learning import (
-    FullyBayesianAcquisitionFunction,
-)
-from botorch.acquisition.objective import ScalarizedPosteriorTransform
-from botorch.models.fully_bayesian import MCMC_DIM, SaasFullyBayesianSingleTask
-from botorch.models.utils import fantasize as fantasize_flag
-from botorch.models.utils.gpytorch_modules import MIN_INFERRED_NOISE_LEVEL
-from botorch.utils.transforms import concatenate_pending_points, t_batch_mode_transform
-from botorch_community.acquisition.bayesian_active_learning import DISTANCE_METRICS
-from botorch_community.models import NeuralProcessModel
+from botorch_community.models.np_regression import NeuralProcessModel
 from torch import Tensor
 
 import torch

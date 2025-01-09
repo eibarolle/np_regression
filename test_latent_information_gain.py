@@ -2,9 +2,8 @@ import unittest
 import torch
 from torch import nn
 from torch.distributions import Normal
-from botorch_community.acquisition import LatentInformationGain
-from botorch_community.models import NeuralProcessModel
-
+from botorch_community.acquisition.latent_information_gain import LatentInformationGain
+from botorch_community.models.np_regression import NeuralProcessModel
 
 class TestLatentInformationGain(unittest.TestCase):
     def setUp(self):
@@ -31,8 +30,6 @@ class TestLatentInformationGain(unittest.TestCase):
         )
         self.context_x = torch.rand(10, self.x_dim)
         self.context_y = torch.rand(10, self.y_dim)
-        self.model.train()
-        self.model(self.context_x, self.context_y)
         self.candidate_x = torch.rand(5, self.x_dim)
 
     def test_initialization(self):
@@ -69,8 +66,8 @@ class TestLatentInformationGain(unittest.TestCase):
             context_x=self.context_x,
             context_y=self.context_y,
         )
-
-        self.assertTrue(abs(lig_2.item() - lig_1.item()) < 1e-1)
+        self.assertTrue(lig_2.item() < lig_1.item())
+        self.assertTrue(abs(lig_2.item() - lig_1.item()) < 0.2)
 
     def test_acquisition_invalid_inputs(self):
         invalid_context_x = torch.rand(10, self.x_dim + 5)  

@@ -30,7 +30,6 @@ from torch.nn import Module, ModuleDict, ModuleList
 from sklearn import preprocessing
 from scipy.stats import multivariate_normal
 from gpytorch.distributions import MultivariateNormal
-from botorch.posteriors import MultivariateNormalPosterior
 
 device = torch.device("cpu")
 # Account for different acquisitions
@@ -235,6 +234,7 @@ class NeuralProcessModel(Model):
         self.r_encoder = REncoder(x_dim+y_dim, r_dim, r_hidden_dims, activation=activation, init_func=init_func) 
         self.z_encoder = ZEncoder(r_dim, z_dim, z_hidden_dims, activation=activation, init_func=init_func) 
         self.decoder = Decoder(x_dim + z_dim, y_dim, decoder_hidden_dims, activation=activation, init_func=init_func) 
+        self.z_dim = z_dim
         self.z_mu_all = None
         self.z_logvar_all = None
         self.z_mu_context = None
@@ -329,7 +329,7 @@ class NeuralProcessModel(Model):
         observation_constant: float,
         observation_noise: bool = False, 
         posterior_transform: Optional[PosteriorTransform] = None,
-    ) -> MultivariateNormalPosterior:
+    ) -> GPyTorchPosterior:
         r"""Computes the model's posterior distribution for given input tensors.
 
         Args:
@@ -340,37 +340,18 @@ class NeuralProcessModel(Model):
             posterior_transform: An optional posterior transformation, defaults to None.
 
         Returns:
-            MultivariateNormalPosterior: The posterior distribution object 
+            GPyTorchPosterior: The posterior distribution object 
             utilizing MultivariateNormal.
         """
-        mean = self.decoder(X, self.sample_z())
+        mean = self.decoder(X, self.sample_z(self.z_mu_all, self.z_logvar_all))
         covariance = torch.eye(X.size(0)) * covariance_multiplier
         if (observation_noise):
             covariance = covariance + observation_constant
         mvn = MultivariateNormal(mean, covariance)
-        posterior = MultivariateNormalPosterior(mvn)
+        posterior = GPyTorchPosterior(mvn)
         if posterior_transform is not None:
             posterior = posterior_transform(posterior)
         return posterior
-        
-    def condition_on_observations(
-        self, 
-        X: torch.Tensor, 
-        Y: torch.Tensor
-    ) -> "NeuralProcessModel":
-        r"""Condition the model on new observations.
-
-        Args:
-            X: Input tensor.
-            Y: Target tensor.
-
-        Returns:
-            NeuralProcessModel: The current model with new conditioned train data.
-        """
-        new_copy = copy.deepcopy(self)
-        new_copy.x_train = X
-        new_copy.y_train = Y
-        return new_copy
     
     def load_state_dict(
         self, 
@@ -413,8 +394,9 @@ class NeuralProcessModel(Model):
         x_t: torch.Tensor,
         x_c: torch.Tensor,
         y_c: torch.Tensor,
+        y_t: torch.Tensor,
         input_dim: int = 0,
-        target_dim: int = 1
+        target_dim: int = 0
     ) -> torch.Tensor:
         r"""Forward pass for the model.
 
@@ -422,6 +404,7 @@ class NeuralProcessModel(Model):
             x_t: Target input data.
             x_c: Context input data.
             y_c: Context target data.
+            y_t: Target output data.
             input_dim: Input dimension concatenated
             target_dim: Target dimension concatendated
 
@@ -434,19 +417,21 @@ class NeuralProcessModel(Model):
             raise ValueError()
         if x_c.size(1 - input_dim) != x_t.size(1 - input_dim):
             raise ValueError()
-        if x_c.size(1 - target_dim) != y_c.size(1 - target_dim):
+        if y_c.size(1 - target_dim) != y_t.size(1 - target_dim):
             raise ValueError()
-        self.z_mu_all, self.z_logvar_all = self.data_to_z_params(torch.cat([x_c, x_t], dim = input_dim), torch.cat([y_c, x_t], dim = target_dim))
+        
+        self.z_mu_all, self.z_logvar_all = self.data_to_z_params(torch.cat([x_c, x_t], dim = input_dim), torch.cat([y_c, y_t], dim = target_dim))
         self.z_mu_context, self.z_logvar_context = self.data_to_z_params(x_c, y_c)
         z = self.sample_z(self.z_mu_all, self.z_logvar_all)
         return self.decoder(x_t, z)
     
     def random_split_context_target(
+        self,
         x: torch.Tensor,
         y: torch.Tensor,
         n_context: int,
         axis: int
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         r"""Helper function to split randomly into context and target.
 
         Args:
@@ -456,19 +441,18 @@ class NeuralProcessModel(Model):
             axis: Dimension axis as int
 
         Returns:
-            Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]: 
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: 
                 - x_c: Context input data.
                 - y_c: Context target data.
                 - x_t: Target input data.
                 - y_t: Target target data.
         """
-    
-        ind = torch.arange(x.shape[axis])
-        mask = torch.randperm(ind.size(0))[:n_context]  
-        x_c = x.index_select(axis, mask)
-        y_c = y.index_select(axis, mask)
-        x_t = torch.index_select(x, axis, torch.setdiff1d(ind, mask))
-        y_t = torch.index_select(y, axis, torch.setdiff1d(ind, mask))
+        ind = np.arange(x.shape[0])
+        mask = np.random.choice(ind, size=n_context, replace=False)
+        x_c = torch.from_numpy(x[mask])
+        y_c = torch.from_numpy(y[mask])
+        x_t = torch.from_numpy(np.delete(x, mask, axis=0))
+        y_t = torch.from_numpy(np.delete(y, mask, axis=0))
 
         return x_c, y_c, x_t, y_t
     
