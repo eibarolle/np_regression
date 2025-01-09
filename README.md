@@ -105,6 +105,8 @@
   - The Latent ZEncoder of the model.
 - Property decoder: Decoder
   - The Decoder of the model.
+- Property z_dim: int
+  - The z_dim of the model.  
 - Property z_mu_all: torch.Tensor
   - Gaussian Distribution Latent Mean of the full data.
 - Property z_logvar_all: torch.Tensor
@@ -162,16 +164,6 @@
   - Return type:
     - MultivariateNormalPosterior
 
-- condition_on_observations(X, Y)
-  - Condition the model on new observations.
-  - Parameters:
-    - X (torch.Tensor)- Input tensor.
-    - Y (torch.Tensor)- Target tensor.
-  - Returns:
-    - New instance of the model conditioned on the given data.
-  - Return type:
-    - NeuralProcessModel
-
 - load_state_dict(state_dict, strict = True)
   - Initialize the fully Bayesian model before loading the state dictionary.
   - Parameters:
@@ -188,14 +180,15 @@
   - Return type:
     - torch.Tensor
 
-- forward(x_t, x_c, y_c, input_dim = 0, target_dim = 1)
+- forward(x_t, x_c, y_c, y_t, input_dim = 0, target_dim = 0)
   - Forward pass for the model.
   - Parameters:
     - x_t (torch.Tensor)- Target input tensor.
     - x_c (torch.Tensor)- Context input tensor.
     - y_c (torch.Tensor)- Context target tensor.
+    - y_t (torch.Tensor)- Target output data.
     - input_dim (int)- Dimension along which input data is concatenated. Defaults to 0.
-    - target_dim (int)- Dimension along which target data is concatenated. Defaults to 1.
+    - target_dim (int)- Dimension along which target data is concatenated. Defaults to 0.
   - Returns:
     - Predicted target values.
   - Return type:
@@ -215,7 +208,7 @@
       - x_t: Target input data.
       - y_t: Target target data.
   - Return type:
-    - Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    - Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 
