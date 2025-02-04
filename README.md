@@ -1,5 +1,9 @@
 # NP Regression Implementation
 
+### Created By: Ernest Ibarolle
+
+### Original Study/Reference: https://arxiv.org/pdf/2106.02770
+
 ## class MLP(input_dim, output_dim, hidden_dims, activation = nn.Sigmoid, init_func = nn.init.normal_)
 - Bases: nn.Module
 - A modular implementation of a Multilayer Perceptron (MLP).
@@ -28,10 +32,10 @@
   - hidden_dims(List[int])- # of units in each hidden dimension.
   - activation(Callable)- Activation function applied between layers, defaults to nn.Sigmoid.
   - init_func(Optional[Callable])- A function initializing the weights, defaults to nn.init.normal_.
-- forward(self, x)
+- forward(self, inputs)
   - Forward pass for the representation encoder.
   - Parameters:
-    - x (torch.Tensor)- Input tensor.
+    - inputs (torch.Tensor)- Input tensor.
   - Returns:
     - A tensor representing the encoded representations of the REncoder.
   - Return type:
@@ -47,10 +51,10 @@
   - activation(Callable)- Activation function applied between layers, defaults to nn.Sigmoid.
   - init_func(Optional[Callable])- A function initializing the weights, defaults to nn.init.normal_.
       
-- forward(self, x)
+- forward(self, inputs)
   - Forward pass for latent encoder.
   - Parameters:
-    - x (torch.Tensor)- Input tensor.
+    - inputs (torch.Tensor)- Input tensor.
     - Returns:
       - A tuple consisting of the mean of the latent Gaussian distribution and the log variance of the latent Gaussian distribution.
     - Return type:
@@ -128,24 +132,24 @@
   - Return type:
     - Tuple[torch.Tensor, torch.Tensor] 
 
-- sample_z(mu, logvar, n = 1, min_std = 0.1, scaler = 0.9)
+- sample_z(mu, logvar, n = 1, min_std = 0.01, scaler = 0.5)
   - Reparameterization trick for sampling from the latent Gaussian distribution.
   - Parameters:
     - mu (torch.Tensor)- Mean of the Gaussian distribution.
     - logvar (torch.Tensor)- Log variance of the Gaussian distribution.
     - n (int)- # of samples. Defaults to 1.
-    - min_std (float)- Minimum standard deviation. Defaults to 0.1.
-    - scaler (float)- Scaling factor for the standard deviation. Defaults to 0.9.
+    - min_std (float)- Minimum standard deviation. Defaults to 0.01.
+    - scaler (float)- Scaling factor for the standard deviation. Defaults to 0.5.
   - Returns:
     - Samples from the Gaussian distribution.
   - Return type:
     - torch.Tensor
 
-- KLD_gaussian(min_std = 0.1, scaler = 0.9)
+- KLD_gaussian(min_std = 0.01, scaler = 0.5)
   - Analytical KL divergence between two Gaussian distributions.
   - Parameters:
-    - min_std (float)- Minimum standard deviation. Defaults to 0.1.
-    - scaler (float)- Scaling factor for the standard deviation. Defaults to 0.9.
+    - min_std (float)- Minimum standard deviation. Defaults to 0.01.
+    - scaler (float)- Scaling factor for the standard deviation. Defaults to 0.5.
   - Returns:
     - KL divergence value.
   - Return type:
@@ -162,13 +166,7 @@
   - Returns:
     - The posterior distribution object utilizing MultivariateNormal.
   - Return type:
-    - MultivariateNormalPosterior
-
-- load_state_dict(state_dict, strict = True)
-  - Initialize the fully Bayesian model before loading the state dictionary.
-  - Parameters:
-    - state_dict (dict)- Dictionary containing the parameters.
-    - strict (bool)- Whether to strictly enforce matching keys. Defaults to True.
+    - GPyTorchPosterior
 
 - transform_inputs(X, input_transform = None)
   - Transform inputs.
@@ -214,6 +212,7 @@
 
 ## class LatentInformationGain(model, num_samples = 10, min_std = 0.1, scaler = 0.9)
 - Latent Information Gain (LIG) Acquisition Function, designed for the NeuralProcessModel.
+- Bases: botorch.acquisition.AcquisitionFunction
 - Parameters:
   - model (NeuralProcessModel)- Trained NeuralProcessModel.
   - num_samples (int)- Number of samples for calculation, defaults to 10.
@@ -222,19 +221,8 @@
 - def acquisition(self, candidate_x, context_x, context_y):
   - Conduct the Latent Information Gain acquisition function for the inputs.
   - Parameters:
-    - candidate_x (torch.Tensor): Candidate input points.
-    - context_x (torch.Tensor): Context input points.
-    - context_y (torch.Tensor): Context target points
+    - candidate_x (torch.Tensor): Candidate input points, as a Tensor. Ideally in the shape (N, q, D), and assumes N = 1 if the given dimensions are 2D.
   - Returns:
-    - The LIG score of computed KLDs.
+    - The LIG scores of computed KLDs, in the shape (N, q).
   - Return type:
     - torch.Tensor
-
-[Wu2023arxiv]:
-   Wu, D., Niu, R., Chinazzi, M., Vespignani, A., Ma, Y.-A., & Yu, R. (2023).
-   Deep Bayesian Active Learning for Accelerating Stochastic Simulation.
-   arXiv preprint arXiv:2106.02770. Retrieved from https://arxiv.org/abs/2106.02770
-
-Created By: Ernest Ibarolle
-
-Original Study/Reference: https://arxiv.org/pdf/2106.02770
