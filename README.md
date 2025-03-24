@@ -79,30 +79,25 @@
       - A tensor representing the model after applying the MLP.
     - Return type:
       - torch.Tensor
-            
-## MAE(pred, target) 
-- Mean Absolute Error loss function.
-- Parameters:
-  - pred (torch.Tensor)- Predicted values.
-  - target (torch.Tensor) - Target values.
-- Returns:
-  - A tensor representing the Mean Absolute Error (MAE).
-- Return type:
-  - torch.Tensor
 
-## class NeuralProcessModel(self, r_hidden_dims, z_hidden_dims, decoder_hidden_dims, x_dim, y_dim, r_dim, z_dim, activation = nn.Sigmoid, init_func = torch.nn.init.normal_) 
+## class NeuralProcessModel(self, train_X, train_Y, r_hidden_dims = [16, 16], z_hidden_dims = [32, 32], decoder_hidden_dims = [16, 16], x_dim = 2, y_dim = 1, r_dim = 64, z_dim = 8, n_context = 20, activation = nn.Sigmoid, init_func = torch.nn.init.normal_, likelihood = Likelihood, input_transform = InputTransform) 
 - Base: botorch.models.model.Model
 - Diffusion Convolutional Recurrent Neural Network Model Implementation.
 - Parameters:
-  - r_hidden_dims (List[int]) - Hidden dimensions/layers for the REncoder.
-  - z_hidden_dims (List[int]) - Hidden dimensions/layers for the ZEncoder.
-  - decoder_hidden_dims (List[int]) - Hidden dimensions/layers for the Decoder.
-  - x_dim (int) - Dimensionality of input data x.
-  - y_dim (int) - Dimensionality of target data y.
-  - r_dim (int) - Dimensionality of representation r.
-  - z_dim (int) - Dimensionality of latent variable z.
+  - train_X (torch.Tensor) - A 'batch_shape x n x d' tensor of training features.
+  - train_Y (torch.Tensor) - A 'batch_shape x n x d' tensor of training observations.    
+  - r_hidden_dims (List[int]) - Hidden dimensions/layers for the REncoder, defaults to [16, 16].
+  - z_hidden_dims (List[int]) - Hidden dimensions/layers for the ZEncoder, defaults to [32, 32].
+  - decoder_hidden_dims (List[int]) - Hidden dimensions/layers for the Decoder, defaults to [16, 16].
+  - x_dim (int) - Dimensionality of input data x, defaults to 2.
+  - y_dim (int) - Dimensionality of target data y, defaults to 1.
+  - r_dim (int) - Dimensionality of representation r, defaults to 64.
+  - z_dim (int) - Dimensionality of latent variable z, defaults to 8.
+  - n_context (int) - Number of context points, defaults to 20.
   - activation(Callable)- Activation function applied between layers, defaults to nn.Sigmoid.
   - init_func (Optional[Callable]) - Function for initializing weights. Defaults to torch.nn.init.normal_.
+  - likelihood (Likelihood) - A likelihood distribution. If omitted, use a standard GaussianLikelihood.
+  - input_transform (InputTransform) - An input transform that is applied in the model's forward pass.
 - Property r_encoder: REncoder
   - The Representation Encoder of the model.
 - Property z_encoder: ZEncoder
@@ -119,6 +114,10 @@
   - Gaussian Distribution Latent Mean of the context data.
 - Property z_logvar_context: torch.Tensor
   - Gaussian Distribution Latent Log Variance of the context data.
+- Property likelihood: Likelihood
+  - Likelihood distributon used for observation noise.
+- Property input_transform: InputTransform
+  - Input Transformer applied in the forward pass.
 
 - data_to_z_params(x, y, xy_dim = 1, r_dim = 0)
   - Compute latent parameters from inputs as a latent distribution.
@@ -155,13 +154,14 @@
   - Return type:
     - torch.Tensor
 
-- posterior(X, covariance_multiplier, observation_constant, observation_noise = False, posterior_transform = None)
+- posterior(X, covariance_multiplier, output_indices, observation_noise = False, posterior_transform = None)
   - Computes the model's posterior distribution for given input tensors.
   - Parameters:
-    - X (torch.Tensor)- Input tensor.
-    - covariance_multiplier (float)- Scaling factor for the covariance matrix.
-    - observation_constant (float)- Noise constant added to the covariance matrix.
-    - observation_noise (bool)- If True, adds observation noise to the covariance matrix, defaults to False.
+    - X (torch.Tensor) - Input tensor.
+    - covariance_multiplier (float) - Scaling factor for the covariance matrix.
+    - output_indices (list_int) - Ignored (defined in parent Model, but not used here).
+    - observation_constant (float) - Noise constant added to the covariance matrix.
+    - observation_noise (bool) - If True, adds observation noise to the covariance matrix, defaults to False.
     - posterior_transform (Optional[PosteriorTransform])- Transformation applied to the posterior distribution, defaults to None.
   - Returns:
     - The posterior distribution object utilizing MultivariateNormal.
@@ -178,19 +178,16 @@
   - Return type:
     - torch.Tensor
 
-- forward(x_t, x_c, y_c, y_t, input_dim = 0, target_dim = 0)
+- forward(train_X, train_Y, axis = 0)
   - Forward pass for the model.
   - Parameters:
-    - x_t (torch.Tensor)- Target input tensor.
-    - x_c (torch.Tensor)- Context input tensor.
-    - y_c (torch.Tensor)- Context target tensor.
-    - y_t (torch.Tensor)- Target output data.
-    - input_dim (int)- Dimension along which input data is concatenated. Defaults to 0.
-    - target_dim (int)- Dimension along which target data is concatenated. Defaults to 0.
+    - train_X (torch.Tensor) - A 'batch_shape x n x d' tensor of training features.
+    - train_Y (torch.Tensor) - A 'batch_shape x n x d' tensor of training observations.
+    - axis (int)- Dimension axis as int. Defaults to 0.
   - Returns:
-    - Predicted target values.
+    - Predicted target value distribution.
   - Return type:
-    - torch.Tensor
+    - MultivariateNormal
 
 - random_split_context_target(x, y, n_context, axis)
   - Helper function to split data into context and target sets.
@@ -210,15 +207,15 @@
 
 
 
-## class LatentInformationGain(model, num_samples = 10, min_std = 0.1, scaler = 0.9)
+## class LatentInformationGain(model, num_samples = 10, min_std = 0.01, scaler = 0.5)
 - Latent Information Gain (LIG) Acquisition Function, designed for the NeuralProcessModel.
 - Bases: botorch.acquisition.AcquisitionFunction
 - Parameters:
-  - model (NeuralProcessModel)- Trained NeuralProcessModel.
-  - num_samples (int)- Number of samples for calculation, defaults to 10.
-  - min_std (float)- The minimum possible standardized std, defaults to 0.1.
-  - scaler (float)- Scaling the std, defaults to 0.9.
-- def acquisition(self, candidate_x, context_x, context_y):
+  - model (Type[Any]) - Trained model.
+  - num_samples (int) - Number of samples for calculation, defaults to 10.
+  - min_std (float)- The minimum possible standardized std, defaults to 0.01.
+  - scaler (float)- Scaling the std, defaults to 0.5.
+- def acquisition(self, candidate_x):
   - Conduct the Latent Information Gain acquisition function for the inputs.
   - Parameters:
     - candidate_x (torch.Tensor): Candidate input points, as a Tensor. Ideally in the shape (N, q, D), and assumes N = 1 if the given dimensions are 2D.
